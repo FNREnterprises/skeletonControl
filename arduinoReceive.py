@@ -18,6 +18,10 @@ def readMessages(arduinoIndex):
 
     config.log(f"arduinoReceive, start readMessages for arduino: {arduinoIndex}")
 
+    msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
+           'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
+    config.updateSharedDict(msg)
+
     while True:
         if config.arduinoConn[arduinoIndex] is None:
             time.sleep(0.1)
@@ -126,44 +130,45 @@ def readMessages(arduinoIndex):
                     continue
 
                 # config.log(f"line read {recv}")
-                msgID = recvB[0:3].decode()
+                # msgID = recvB[0:3].decode()
+                config.log(f"<-I{arduinoIndex} " + recv[:-1], publish=False)
 
-
+                """
                 if msgID == "!A0":  # "arduino ready"
                     # lower arduino, index 0, COM7 should reply with !A0
                     config.log(f"!A0 response from {arduinoIndex=}")
 
                     if arduinoIndex == 1:
-                        config.log(f"has lower arduino, arduinoIndex 0, COM7 a GND connection on Pin 50?")
-                        config.log(f"if so, w10 has a wrong device/COM-Port assignment")
-                        config.log(f"wrong arduino assignment, going down")
+                        config.log(f"has left arduino, arduinoIndex 0, a GND connection on Pin 50?")
+                        config.log(f"if so, the system has a wrong device/COM-Port assignment")
+                        config.log(f"wrong arduino assignment, change in connectWithArduinos, going down")
                         os._exit(3)
 
                     #config.share.arduinoDict.get(arduino)['connected'] = True
                     config.log(f"ready message from arduino {config.arduinoDictLocal[arduinoIndex]['arduinoName']} received")
                     config.arduinoDictLocal[arduinoIndex]['connected'] = True
-                    #updStmt = (mg.SharedDataItem.ARDUINO, arduinoIndex, config.arduinoDictLocal[arduinoIndex])
-                    msg = {'cmd': mg.SharedDataItem.ARDUINO, 'sender': config.processName,
+                    #updStmt = (mg.SharedDataItems.ARDUINO, arduinoIndex, config.arduinoDictLocal[arduinoIndex])
+                    msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
                             'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
                     config.updateSharedDict(msg)
 
                 elif msgID == "!A1":  # "arduino ready" from upper arduino
                     # upper arduino, index 1, COM6 should reply with !A1
 
-                    config.log(f"!A1 response from {arduinoIndex=}")
+                    config.log(f"!A1 response from arduino A{arduinoIndex}")
 
                     if arduinoIndex == 0:
-                        config.log(f"has lower arduino, arduinoIndex 0, COM7 a GND connection on Pin 50?")
-                        config.log(f"if so, w10 has a wrong device/COM-Port assignment")
-                        config.log(f"wrong arduino assignment, going down")
+                        config.log(f"has left arduino, arduinoIndex 0, a GND connection on Pin 50?")
+                        config.log(f"if so, the system has a wrong device/COM-Port assignment")
+                        config.log(f"wrong arduino assignment, change in connectWithArduino, going down")
                         os._exit(4)
 
                     # config.share.arduinoDict.get(arduino)['connected'] = True
                     config.log(
                         f"ready message from arduino {config.arduinoDictLocal[arduinoIndex]['arduinoName']} received")
                     config.arduinoDictLocal[arduinoIndex]['connected'] = True
-                    #updStmt = (mg.SharedDataItem.ARDUINO, arduinoIndex, config.arduinoDictLocal[arduinoIndex])
-                    msg = {'cmd': mg.SharedDataItem.ARDUINO, 'sender': config.processName,
+                    #updStmt = (mg.SharedDataItems.ARDUINO, arduinoIndex, config.arduinoDictLocal[arduinoIndex])
+                    msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
                            'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
                     config.updateSharedDict(msg)
 
@@ -172,4 +177,4 @@ def readMessages(arduinoIndex):
                         config.log(f"<-I{arduinoIndex} " + recv[:-1], publish=False)
                     except:
                         config.log(f"Unexpected error on reading messages: {sys.exc_info()[0]}")
-
+                """

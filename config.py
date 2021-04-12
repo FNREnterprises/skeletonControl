@@ -55,6 +55,6 @@ def updateSharedDict(msg):
         os._exit(1)
 
 def updateSharedServoCurrent(servoName, servoCurrentLocal):
-    msg = {'cmd': mg.SharedDataItem.SERVO_CURRENT, 'sender':processName,
+    msg = {'cmd': mg.SharedDataItems.SERVO_CURRENT, 'sender':processName,
            'info': {'servoName': servoName, 'data': dict(servoCurrentLocal.__dict__)}}
     updateSharedDict(msg)

@@ -42,14 +42,13 @@ class MoveRequestBuffer:
             if self.superVerbose: config.log(f"{self.servoActiveList=}")
 
             # check for more requests in request list for this servo
+            if self.verbose: config.log(f"{self.servoRequestList=}")
             moreRequests = any(request['servoName'] for request in self.servoRequestList if request['servoName'] == servoName)
             if not moreRequests:
                 servoCurrentLocal = config.servoCurrentDictLocal[servoName]
                 servoCurrentLocal.inRequestList = False
                 config.updateSharedServoCurrent(servoName, servoCurrentLocal)
-                #msg = {'cmd': mg.SharedDataItem.SERVO_CURRENT, 'sender': config.processName,
-                #       'info': {'servoName': servoName, 'data': {'inRequestList': True}}}
-                #config.updateSharedDict(msg)
+
 
     def clearBuffer(self):
         self.servoRequestList.clear()

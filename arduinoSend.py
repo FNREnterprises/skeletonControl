@@ -5,27 +5,24 @@ import config
 from marvinglobal import skeletonClasses
 from marvinglobal import marvinglobal as mg
 
+lastSerialSend = [0.0, 0,0]
+
 
 def sendArduinoCommand(arduinoIndex, msg):
+    global lastSerialSend
     if msg[-1] != "\n":
         msg += "\n"
     conn = config.arduinoConn[arduinoIndex]
     if conn is not None:
-        #config.log(f"send msg to arduino {arduinoIndex}, {msg}")
+        config.log(f"send msg to arduino {arduinoIndex}, {msg}")
+        # do not overload the arduino with too many requests
+        while time.time() - lastSerialSend[arduinoIndex] < 0.05:
+            time.sleep(0.01)
         conn.write(bytes(msg, 'ascii'))
         conn.flush()
-        # do not overload the arduino with too many requests
-        time.sleep(0.05)
+        lastSerialSend[arduinoIndex] = time.time()
     else:
         config.log(f"no connection with arduino {arduinoIndex}")
-
-
-def requestArduinoReady(arduinoIndex):
-
-    msg = f"i,{arduinoIndex}\n"
-    sendArduinoCommand(arduinoIndex, msg)
-    arduinoData = config.arduinoDictLocal[arduinoIndex]
-    config.log(f"request ready message from arduino {arduinoIndex}, {arduinoData['arduinoName']}, {arduinoData['comPort']}")
 
 
 def servoAssign(servoName, lastPos):
@@ -151,7 +148,7 @@ def setPosition(servoName: str, newPos: int):
 
 
 def setVerbose(servoName: str, state: bool):
-    config.log(f"{servoName} verbose set to {state}")
+    config.log(f"setVerbose through servoName: {servoName} verbose set to {state}")
     servoStatic = config.servoStaticDictLocal.get(servoName)
     verboseState = 1 if state else 0
     msg = f"7,{servoStatic.pin},{verboseState},\n"

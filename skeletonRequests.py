@@ -10,6 +10,7 @@ from marvinglobal import skeletonClasses
 def assign(request):
     arduinoSend.servoAssign(request['servoName'], request['position'])
 
+
 def reassign(msg):
     # when servo definitions are changed through the gui the local
     # dict needs to use the new shared dict values
@@ -39,7 +40,7 @@ def requestDegrees(request):
 
 #    def setVerbose(self, requestQueue, servoName, verbose):
 #        requestQueue.put({'cmd': 'setVerbose', 'servoName': servoName, 'verbose': verbose})
-def setVerbose(request):
+def setVerboseRequest(request):
     arduinoSend.setVerbose(request['servoName'], request['verboseOn'])
 
 #    def allServoStop(self, requestQueue):
@@ -78,19 +79,11 @@ def startSwipe(request):
     servoCurrentLocal:skeletonClasses.ServoCurrent = config.servoCurrentDictLocal.get(servoName)
     servoCurrentLocal.swiping = True
     config.updateSharedServoCurrent(servoName, servoCurrentLocal)
-    # request servoCurrent update with new swiping state
-    #updStmt = (mg.SharedDataItem.SERVO_CURRENT, servoName, {'swiping': True})
-    #msg = {'cmd': mg.SharedDataItem.SERVO_CURRENT, 'sender': config.processName,
-    #       'info': {'servoName': servoName, 'swiping': True}}
-    #config.updateSharedDict(msg)
-    # this updates the shared currentDict, as the skeletonControl never pulls current data
-    # back from the share update the local copy too
-    #servoCurrent.swiping = True
 
     minPos = servoStatic.minPos
-    moveDuration = servoDerived.msPerPos * servoDerived.posRange
+    swipeMoveDuration = servoDerived.msPerPos * servoDerived.posRange * 2
 
-    arduinoSend.requestServoPosition(servoName, minPos, moveDuration)
+    arduinoSend.requestServoPosition(servoName, minPos, swipeMoveDuration)
     # continuation of swipe is handled with the end move message in arduinoReceive
     # swiping stop is triggered by button or servo stop/rest request
 
@@ -101,7 +94,7 @@ def stopSwipe(request):
     servoCurrentLocal:skeletonClasses.ServoCurrent = config.servoCurrentDictLocal.get(servoName)
     servoCurrentLocal.swiping = False
     config.updateSharedServoCurrent(servoName, servoCurrentLocal)
-    #msg = {'cmd': mg.SharedDataItem.SERVO_CURRENT, 'sender': config.processName,
+    #msg = {'cmd': mg.SharedDataItems.SERVO_CURRENT, 'sender': config.processName,
     #       'info': {'servoName': servoName, 'data': servoCurrentLocal.__dict__}}
     #config.updateSharedDict(msg)
     arduinoSend.requestRest(servoName)

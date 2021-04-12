@@ -17,40 +17,6 @@ import arduinoReceive
 import skeletonRequests
 
 
-def openSerial(arduinoIndex):
-    #{'arduinoIndex', 'arduinoName', 'comPort', 'connected'}
-
-    arduinoData = config.arduinoDictLocal[arduinoIndex]
-    if arduinoData['comPort'] == "unassigned":
-        return True
-    conn = None
-    try:
-        conn = serial.Serial(arduinoData['comPort'])
-        # try to reset the arduino
-        conn.setDTR(False)
-        time.sleep(0.2)
-        conn.setDTR(True)
-        time.sleep(0.2)
-        conn.baudrate = 115200
-        conn.writeTimeout = 0
-        #config.log(f"serial connection with arduino {a['arduinoIndex']}, {a['arduinoName']} on {a['comPort']} initialized")
-
-        config.log(f"serial connection with arduino {arduinoData['arduinoName']} set")
-        config.arduinoConn[arduinoIndex] = conn
-
-        return True
-
-    except Exception as eSerial:
-        config.log(f"exception on serial connect with arduino: {arduinoData['arduinoName']}, comPort: {arduinoData['comPort']}, {eSerial}, going down")
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception as e2:
-                config.log(f"conn.close failed, {e2}")
-        sys.exit(5)
-
-
-
 def assignServos(arduinoIndex):
     """
     servo definitions are stored in a json file
@@ -112,8 +78,8 @@ def initServoControl():
             config.servoTypeDictLocal.update({servoTypeName: servoType})
 
             # add servoTypes to shared data
-            #updStmt = (mg.SharedDataItem.SERVO_TYPE, servoTypeName, dict(servoType.__dict__))
-            msg = {'cmd': mg.SharedDataItem.SERVO_TYPE, 'sender': config.processName,
+            #updStmt = (mg.SharedDataItems.SERVO_TYPE, servoTypeName, dict(servoType.__dict__))
+            msg = {'cmd': mg.SharedDataItems.SERVO_TYPE, 'sender': config.processName,
                    'info': {'type': servoTypeName, 'data': dict(servoType.__dict__)}}
             config.updateSharedDict(msg)
 
@@ -162,8 +128,8 @@ def initServoControl():
             config.servoStaticDictLocal.update({servoName: servoStatic})
 
             # populate the shared version of the dict
-            #updStmt = (mg.SharedDataItem.SERVO_STATIC, servoName, dict(servoStatic.__dict__))
-            msg = {'cmd': mg.SharedDataItem.SERVO_STATIC, 'sender': config.processName,
+            #updStmt = (mg.SharedDataItems.SERVO_STATIC, servoName, dict(servoStatic.__dict__))
+            msg = {'cmd': mg.SharedDataItems.SERVO_STATIC, 'sender': config.processName,
                    'info': {'servoName': servoName, 'data': dict(servoStatic.__dict__)}}
             config.marvinShares.updateSharedData(msg)
 
@@ -218,7 +184,7 @@ def initServoControl():
             # add servoCurrent to shared data
             servoCurrentLocal = config.servoCurrentDictLocal[servoName]
             config.updateSharedServoCurrent(servoName, servoCurrentLocal)
-            #msg = {'cmd': mg.SharedDataItem.SERVO_CURRENT, 'sender': config.processName,
+            #msg = {'cmd': mg.SharedDataItems.SERVO_CURRENT, 'sender': config.processName,
             #       'info': {'servoName': servoName, 'data': dict(servoCurrent.__dict__)}}
             #config.updateSharedDict(msg)
 
@@ -286,22 +252,87 @@ def connectWithArduinos():
     # in windows make sure with device manager, port settings, advanced
     # to assign the device to the correct COM port
     config.arduinoDictLocal.update(
-        {0: {'arduinoName': 'left, lower arduino', 'comPort': 'COM7', 'connected': False}})
+# w10        {0: {'arduinoName': 'left arduino', 'comPort': 'COM7', 'connected': False}})
+        {0: {'arduinoName': 'S0, left arduino', 'comPort': '/dev/ttyACM', 'connected': False}})
     config.arduinoDictLocal.update(
-        {1: {'arduinoName': 'right, upper arduino', 'comPort': 'COM6', 'connected': False}})
+# w10        {1: {'arduinoName': 'right arduino', 'comPort': 'COM6', 'connected': False}})
+        {1: {'arduinoName': 'S1, right arduino', 'comPort': '/dev/ttyACM', 'connected': False}})
 
     # update the shared copy to be available for other interested processes
     for arduinoIndex, arduinoDict in config.arduinoDictLocal.items():
-        #updStmt = (mg.SharedDataItem.ARDUINO, arduinoIndex, arduinoDict)
-        msg = {'cmd': mg.SharedDataItem.ARDUINO, 'sender': config.processName,
+        #updStmt = (mg.SharedDataItems.ARDUINO, arduinoIndex, arduinoDict)
+        msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
                'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
         config.updateSharedDict(msg)
 
-    # try to open comm ports
-    for arduinoIndex, arduinoData in config.arduinoDictLocal.items():
-        if not openSerial(arduinoIndex):
-            config.log(f"could not open serial port {arduinoIndex['comPort']}, going down")
-            os._exit(8)
+    # try to find the skeleton arduinos
+    pathArduino = "/dev/ttyACM"
+
+    config.arduino = None
+    config.arduinoConnEstablished = False
+
+    for portNumber in range(5):
+        usbPort = pathArduino + str(portNumber)
+        arduino = None
+        try:
+            arduino = serial.Serial(usbPort)
+            arduino.baudrate = 115200
+
+        except Exception as e:
+            config.log(f"could not connect with {usbPort}, try next")
+            continue
+
+        # arduino sends an initial message, check for correct Arduino
+        if arduino.is_open:
+
+            config.log(f"connected with {usbPort}, try to read first message")
+            numBytesAvailable = 0
+            timeout = time.time() + 5
+            try:
+                while numBytesAvailable == 0 and time.time() < timeout:
+                    numBytesAvailable = arduino.inWaiting()
+            except Exception as e:
+                config.log(f"exception in arduinoReceive, readMessages: {e}")
+                continue
+
+            if numBytesAvailable == 0:
+                config.log(f"could not receive initial message")
+                continue
+            else:
+                # cartGlobal.log(f"inWaiting > 0")
+                recvB = arduino.readline()
+                try:
+                    recv = recvB.decode()[:-2]  # without cr/lf
+                except Exception as e:
+                    config.log(f"problem with decoding cart msg '{recvB}' {e}")
+                    continue
+
+                if recv[0:3] == "S0 ":
+                    config.arduinoConn[0] = arduino
+                    config.arduinoDictLocal[0]["comPort"] = usbPort
+                    config.arduinoDictLocal[0]["connected"] = True
+                    config.log(f"received {recv}, connected with skeletonControlArduino S0 on usb port {usbPort}")
+                    if config.arduinoConn[1] is None:
+                        continue
+                    break
+
+                elif recv[0:3] == "S1 ":
+                    config.arduinoConn[1] = arduino
+                    config.arduinoDictLocal[1]["comPort"] = usbPort
+                    config.arduinoDictLocal[1]["connected"] = True
+                    config.log(f"received {recv}, connected with skeletonControlArduino S1 on usb port {usbPort}")
+                    if config.arduinoConn[0] is None:
+                        continue
+                    break
+
+                else:
+                    config.log(f"received {recv}, not a skeletonControlArduino, try next")
+                    continue
+
+    if config.arduinoConn[0] is None or config.arduinoConn[1] is None:
+        config.log(f"could not find both skeletonControlArduinos, going down")
+        os._exit(1)
+
 
     # start serial port receiving threads
     for arduinoIndex,arduinoData in config.arduinoDictLocal.items():
@@ -310,26 +341,30 @@ def connectWithArduinos():
         serialReadThread.name = f"arduinoRead_{arduinoIndex}"
         serialReadThread.start()
 
+        msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
+               'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
+        config.updateSharedDict(msg)
+
     # verify connection by requesting a first response from Arduino
-    time.sleep(0.5)
-    for arduinoIndex, arduinoData in config.arduinoDictLocal.items():
-        arduinoSend.requestArduinoReady(arduinoIndex)
+    #time.sleep(0.5)
+    #for arduinoIndex, arduinoData in config.arduinoDictLocal.items():
+    #    arduinoSend.requestArduinoReady(arduinoIndex)
 
     # wait for response from arduinos
-    for i in range(100):
-        if config.arduinoDictLocal.get(0)['connected'] and config.arduinoDictLocal.get(1)['connected']:
-            break
-        time.sleep(0.1)
+    #for i in range(100):
+    #    if config.arduinoDictLocal.get(0)['connected'] and config.arduinoDictLocal.get(1)['connected']:
+    #        break
+    #    time.sleep(0.1)
 
     # check for successful connection with both arduinos
-    for arduinoIndex, arduinoData in config.arduinoDictLocal.items():
-        if not arduinoData['connected']:
-            config.log(f"could not receive serial response from arduino {arduinoData['arduinoName']}, {arduinoData['comPort']}")
-            os._exit(9)
+    #for arduinoIndex, arduinoData in config.arduinoDictLocal.items():
+    #    if not arduinoData['connected']:
+    #        config.log(f"could not receive serial response from arduino {arduinoData['arduinoName']}, {arduinoData['comPort']}")
+    #        os._exit(9)
 
 
     # allow arduinos to report their status
-    time.sleep(0.2)
+    #time.sleep(0.2)
 
 
 if __name__ == "__main__":
