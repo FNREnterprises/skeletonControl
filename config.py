@@ -20,14 +20,16 @@ servoTypeDictLocal = {}
 servoStaticDictLocal = {}
 servoDerivedDictLocal = {}
 servoCurrentDictLocal = {}
+servoFeedbackDictLocal = {}
 
 persistedServoPositionsLocal = {}
 servoPositionsChanged = False
 
 servoNameByArduinoAndPin = {}   # a dictionary to access servos by Arduino and Id
 
-moveRequestBuffer = moveRequestBuffer.MoveRequestBuffer()
+moveRequestBuffer = moveRequestBuffer.MoveRequestBuffer(verbose=False)
 
+feedbackPositions = {}
 
 # special case jaw servo, keep track of last requested position
 lastRequestedJawPosition = 80
@@ -48,13 +50,13 @@ def log(msg, publish=True):
 
 
 def updateSharedDict(msg):
-    log(f"udpateSharedDict, {msg=}")
+    #log(f"updateSharedDict, {msg=}")
     if not marvinShares.updateSharedData(msg):
 
         log(f"connection with shared data lost, going down") # connection to marvinData lost, try to reconnect
         os._exit(1)
 
 def updateSharedServoCurrent(servoName, servoCurrentLocal):
-    msg = {'cmd': mg.SharedDataItems.SERVO_CURRENT, 'sender':processName,
+    msg = {'msgType': mg.SharedDataItems.SERVO_CURRENT, 'sender':processName,
            'info': {'servoName': servoName, 'data': dict(servoCurrentLocal.__dict__)}}
     updateSharedDict(msg)

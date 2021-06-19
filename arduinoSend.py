@@ -5,6 +5,8 @@ import config
 from marvinglobal import skeletonClasses
 from marvinglobal import marvinglobal as mg
 
+import feedbackServo
+
 lastSerialSend = [0.0, 0,0]
 
 
@@ -14,12 +16,13 @@ def sendArduinoCommand(arduinoIndex, msg):
         msg += "\n"
     conn = config.arduinoConn[arduinoIndex]
     if conn is not None:
-        config.log(f"send msg to arduino {arduinoIndex}, {msg}")
+        #config.log(f"send msg to arduino {arduinoIndex}: {msg}")
         # do not overload the arduino with too many requests
         while time.time() - lastSerialSend[arduinoIndex] < 0.05:
             time.sleep(0.01)
         conn.write(bytes(msg, 'ascii'))
         conn.flush()
+        if msg != '1,24': config.log(f"msg to arduino {arduinoIndex}: {bytes(msg, 'ascii')}")   # do not log jaw
         lastSerialSend[arduinoIndex] = time.time()
     else:
         config.log(f"no connection with arduino {arduinoIndex}")
@@ -44,6 +47,16 @@ pin: {servoStatic.pin:2}, minPos: {servoStatic.minPos:3}, maxPos:{servoStatic.ma
 restDeg: {servoStatic.restDeg:3}, autoDetach: {servoStatic.autoDetach:4.0f}, inverted: {inverted}, lastPos: {lastPos:3}, powerPin: {servoStatic.powerPin}")
 
 
+def servoFeedbackDefinitions(arduinoIndex, pin, servoFeedback):
+    msg = f"8,{pin},{servoFeedback.i2cMultiplexerAddress},{servoFeedback.i2cMultiplexerChannel},"
+    msg += f"{servoFeedback.speedACalcType},{servoFeedback.speedAFactor},{servoFeedback.speedAOffset},"
+    msg += f"{servoFeedback.speedBCalcType},{servoFeedback.speedBFactor},{servoFeedback.speedBOffset},"
+    msg += f"{servoFeedback.degPerPos},{servoFeedback.servoSpeedRange},\n"
+
+    sendArduinoCommand(arduinoIndex, msg)
+
+    config.log(f"feedback definitions sent: {servoFeedback}")
+
 def requestServoPosition(servoName, newPosition, duration, sequential=True):
     """
     move servo in <duration> seconds from current position to <position>
@@ -58,7 +71,6 @@ def requestServoPosition(servoName, newPosition, duration, sequential=True):
 
     servoDerived = config.servoDerivedDictLocal.get(servoName)
     servoCurrent = config.servoCurrentDictLocal.get(servoName)
-
     degrees = mg.evalDegFromPos(servoStatic, servoDerived, newPosition)
 
     # special case head.jaw, overwrite last move request as we can get lots of requests
@@ -76,19 +88,20 @@ def requestServoPosition(servoName, newPosition, duration, sequential=True):
     if duration < minDuration:
         #config.log(f"{servoName}: duration increased, deltaPos: {deltaPos:.0f}, msPerPos: {servoDerived.msPerPos:.1f}, from: {duration:.0f} to: {minDuration:.0f}")
         duration = minDuration
-
+    speed = minDuration/duration    # >0..1
     servoCurrent.timeOfLastMoveRequest = time.time()
 
-    msg = f"1,{servoStatic.pin:02.0f},{newPosition:03.0f},{duration:04.0f},\n"
+    msg = f"1,{servoStatic.pin:02.0f},{newPosition:03.0f},{duration:04.0f}\n"
 
     # for sequential requests add the request to a list and run moves for a single servo in sequence
     if sequential:
         config.moveRequestBuffer.addMoveRequest(
             {'servoName': servoName,
              'arduino': servoStatic.arduinoIndex,
-             'msg': msg})
+             'msg': msg,
+             'speed': speed})
     else:
-        # if servo in move arduino will terminate current move and set new target
+        # if servo is still moving arduino will terminate the current move and set the new target
         sendArduinoCommand(servoStatic.arduinoIndex, msg)
 
 
@@ -150,9 +163,13 @@ def setPosition(servoName: str, newPos: int):
 def setVerbose(servoName: str, state: bool):
     config.log(f"setVerbose through servoName: {servoName} verbose set to {state}")
     servoStatic = config.servoStaticDictLocal.get(servoName)
+    servoCurrent = config.servoCurrentDictLocal.get(servoName)
     verboseState = 1 if state else 0
     msg = f"7,{servoStatic.pin},{verboseState},\n"
     sendArduinoCommand(servoStatic.arduinoIndex, msg)
+
+    servoCurrent.verbose = state
+    config.updateSharedServoCurrent(servoName, servoCurrent)
 
 
 def requestRest(servoName: str):

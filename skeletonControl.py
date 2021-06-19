@@ -15,7 +15,7 @@ import config
 import arduinoSend
 import arduinoReceive
 import skeletonRequests
-
+import moveRequestBuffer
 
 def assignServos(arduinoIndex):
     """
@@ -41,6 +41,25 @@ def assignServos(arduinoIndex):
 
         if servoStatic.enabled and servoStatic.arduinoIndex == arduinoIndex:
             arduinoSend.requestServoPosition(servoName, config.servoCurrentDictLocal.get(servoName).position, 1000)
+
+def setupFeedbackServos(arduinoIndex):
+    """
+    feedback servo definitions are stored in a json file
+    for each servo handled by the <arduinoIndex> send the definitions to the arduino
+    :param arduinoIndex:
+    :return:
+    """
+
+    config.log(f"send feedback servo definitions to arduino {arduinoIndex}")
+
+    # send servo definition data to arduino
+    for servoName, servoFeedback in config.servoFeedbackDictLocal.items():
+        servoStatic = config.servoStaticDictLocal[servoName]
+        if servoStatic.enabled and servoStatic.arduinoIndex == arduinoIndex:
+
+            config.log(f"servo feedback definitions {servoName}")
+            arduinoSend.servoFeedbackDefinitions(arduinoIndex, servoStatic.pin, servoFeedback)
+            time.sleep(0.2)     # add delay as arduino gets overwhelmed otherwise
 
 
 def saveServoPosition(servoName, position, maxDelay=10):
@@ -74,12 +93,13 @@ def initServoControl():
             os._exit(6)
 
         for servoTypeName, servoTypeData in servoTypeDefinitions.items():
-            servoType = skeletonClasses.ServoType(servoTypeData)   # inst of servoTypeData class
+            servoType = skeletonClasses.ServoType()   # inst of servoTypeData class
+            servoType.updateValues(servoTypeData)
             config.servoTypeDictLocal.update({servoTypeName: servoType})
 
             # add servoTypes to shared data
             #updStmt = (mg.SharedDataItems.SERVO_TYPE, servoTypeName, dict(servoType.__dict__))
-            msg = {'cmd': mg.SharedDataItems.SERVO_TYPE, 'sender': config.processName,
+            msg = {'msgType': mg.SharedDataItems.SERVO_TYPE, 'sender': config.processName,
                    'info': {'type': servoTypeName, 'data': dict(servoType.__dict__)}}
             config.updateSharedDict(msg)
 
@@ -100,7 +120,8 @@ def initServoControl():
             os._exit(7)
 
         for servoName in servoStaticDefinitions:
-            servoStatic = skeletonClasses.ServoStatic(servoStaticDefinitions[servoName])
+            servoStatic = skeletonClasses.ServoStatic()
+            servoStatic.updateValues(servoStaticDefinitions[servoName])
             servoType = config.servoTypeDictLocal[servoStatic.servoType]
 
             # data cleansing
@@ -129,13 +150,39 @@ def initServoControl():
 
             # populate the shared version of the dict
             #updStmt = (mg.SharedDataItems.SERVO_STATIC, servoName, dict(servoStatic.__dict__))
-            msg = {'cmd': mg.SharedDataItems.SERVO_STATIC, 'sender': config.processName,
+            msg = {'msgType': mg.SharedDataItems.SERVO_STATIC, 'sender': config.processName,
                    'info': {'servoName': servoName, 'data': dict(servoStatic.__dict__)}}
             config.marvinShares.updateSharedData(msg)
 
             #config.updateSharedDict(updStmt)
 
         config.log(f"shared servo data updated")
+
+    def loadServoFeedbackDefinitions():
+        # feedback definitions
+        config.log(f"open servo feedback definition file {mg.SERVO_FEEDBACK_DEFINITIONS_FILE}")
+        try:
+            with open(mg.SERVO_FEEDBACK_DEFINITIONS_FILE, 'r') as infile:
+                servoFeedbackDefinitions = json.load(infile)
+            with open(mg.SERVO_FEEDBACK_DEFINITIONS_FILE + ".bak", 'w') as outfile:
+                json.dump(servoFeedbackDefinitions, outfile, indent=2)
+
+        except Exception as e:
+            config.log(f"problem loading {mg.SERVO_FEEDBACK_DEFINITIONS_FILE} file, try using the backup file, {e}")
+            os._exit(6)
+
+        for servoName, servoFeedbackData in servoFeedbackDefinitions.items():
+            servoFeedback = skeletonClasses.ServoFeedback()   # inst of servoFeedbackData class
+            servoFeedback.updateValues(servoFeedbackData)
+            config.servoFeedbackDictLocal.update({servoName: servoFeedback})
+
+            # add servoFeedback to shared data
+            #updStmt = (mg.SharedDataItems.SERVO_TYPE, servoTypeName, dict(servoType.__dict__))
+            msg = {'msgType': mg.SharedDataItems.SERVO_FEEDBACK, 'sender': config.processName,
+                   'info': {'servoName': servoName, 'data': dict(servoFeedback.__dict__)}}
+            config.updateSharedDict(msg)
+
+        config.log(f"servoFeedbackDict loaded")
 
 
     def loadServoPositions():
@@ -172,7 +219,6 @@ def initServoControl():
 
             # create ServoCurrent object
             servoCurrent = skeletonClasses.ServoCurrent()
-
             servoCurrent.position = p
 
             # set degrees from pos
@@ -184,7 +230,7 @@ def initServoControl():
             # add servoCurrent to shared data
             servoCurrentLocal = config.servoCurrentDictLocal[servoName]
             config.updateSharedServoCurrent(servoName, servoCurrentLocal)
-            #msg = {'cmd': mg.SharedDataItems.SERVO_CURRENT, 'sender': config.processName,
+            #msg = {'msgType': mg.SharedDataItems.SERVO_CURRENT, 'sender': config.processName,
             #       'info': {'servoName': servoName, 'data': dict(servoCurrent.__dict__)}}
             #config.updateSharedDict(msg)
 
@@ -196,9 +242,12 @@ def initServoControl():
     config.log(f"create servoDerivedDict")
     for servoName, servoStatic in config.servoStaticDictLocal.items():
         servoType = config.servoTypeDictLocal[servoStatic.servoType]
-        servoDerived = skeletonClasses.ServoDerived(servoStatic, servoType)
+        #servoDerived = skeletonClasses.ServoDerived(servoStatic, servoType)
+        servoDerived = skeletonClasses.ServoDerived()
+        servoDerived.updateValues(servoStatic, servoType)
         config.servoDerivedDictLocal.update({servoName: servoDerived})
 
+    loadServoFeedbackDefinitions()
 
     loadServoPositions()
     saveServoStaticDict()
@@ -261,7 +310,7 @@ def connectWithArduinos():
     # update the shared copy to be available for other interested processes
     for arduinoIndex, arduinoDict in config.arduinoDictLocal.items():
         #updStmt = (mg.SharedDataItems.ARDUINO, arduinoIndex, arduinoDict)
-        msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
+        msg = {'msgType': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
                'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
         config.updateSharedDict(msg)
 
@@ -277,6 +326,12 @@ def connectWithArduinos():
         try:
             arduino = serial.Serial(usbPort)
             arduino.baudrate = 115200
+
+            # Toggle DTR to reset Arduino
+            arduino.setDTR(False)
+            time.sleep(1)
+            arduino.flushInput()
+            arduino.setDTR(True)
 
         except Exception as e:
             config.log(f"could not connect with {usbPort}, try next")
@@ -341,7 +396,7 @@ def connectWithArduinos():
         serialReadThread.name = f"arduinoRead_{arduinoIndex}"
         serialReadThread.start()
 
-        msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
+        msg = {'msgType': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
                'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
         config.updateSharedDict(msg)
 
@@ -369,8 +424,10 @@ def connectWithArduinos():
 
 if __name__ == "__main__":
 
-    #config.startLogging()
+    os.chdir("/home/marvin/InMoov/skeletonControl")
 
+    #config.startLogging()
+    config.log(f"{config.processName},  trying to connect with marvinData")
     config.marvinShares = marvinShares.MarvinShares()
     if not config.marvinShares.sharedDataConnect(config.processName):
         config.log(f"could not connect with marvinData")
@@ -388,10 +445,15 @@ if __name__ == "__main__":
     for arduinoIndex, arduinoData in config.arduinoDictLocal.items():
         config.log(f"assign servos to arduino {arduinoIndex}, {arduinoData['arduinoName']=}, {arduinoData['comPort']=}")
         assignServos(arduinoIndex)
-
+        setupFeedbackServos(arduinoIndex)
 
     # set verbose mode for servos to report more details
     arduinoSend.setVerbose('rightArm.bicep', True)
+
+    # start thread for monitoring the moveRequestBuffer
+    requestBufferThread = threading.Thread(target=moveRequestBuffer.monitorMoveRequestBuffer, args={})
+    requestBufferThread.name = f"requestBufferMonitor"
+    requestBufferThread.start()
 
     config.log(f"skeletonControl ready, waiting for skeleton requests")
     config.log(f"---------------")
@@ -402,9 +464,6 @@ if __name__ == "__main__":
         if config.servoPositionsChanged:
             persistServoPositions()
             config.servoPositionsChanged = False
-
-        # check for bufferend servo move requests
-        config.moveRequestBuffer.checkForExecutableRequests()
 
         try:
             config.marvinShares.updateProcessDict(config.processName)
@@ -418,8 +477,6 @@ if __name__ == "__main__":
             config.marvinShares.removeProcess(config.processName)
             os._exit(11)
 
-        #config.log(f"skeletonRequestQueue, request received: {request}")
-
         try:
             if 'servoName' in request.keys():
                 # do not log head.jaw requests as they are very frequent
@@ -428,9 +485,11 @@ if __name__ == "__main__":
         except Exception as e:
             config.log(f"invalid request received: {request}")
 
+        ################################################################
         # try to call the servo method in module skeletonRequests
+        ################################################################
         try:
-            methodName = request['cmd']
+            methodName = request['msgType']
             getattr(skeletonRequests, methodName, lambda: 'unknown')(request)   #skeletonRequests.cmd
 
         except Exception as e:

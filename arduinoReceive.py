@@ -8,6 +8,7 @@ from marvinglobal import marvinglobal as mg
 from marvinglobal import skeletonClasses
 
 import arduinoSend
+import feedbackServo
 import skeletonControl
 
 
@@ -18,7 +19,7 @@ def readMessages(arduinoIndex):
 
     config.log(f"arduinoReceive, start readMessages for arduino: {arduinoIndex}")
 
-    msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
+    msg = {'msgType': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
            'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
     config.updateSharedDict(msg)
 
@@ -45,84 +46,99 @@ def readMessages(arduinoIndex):
 
                 recvB = conn.readline()
 
-                #config.log(f"from arduino {arduino}: {recvB}")
-
                 # check for existing shared data connection
                 if config.marvinShares is None:
                     continue
 
-                # special case status messages, as these can be very frequently
-                # a compressed format is used
-                if len(recvB) == 8:
-                    s1 = int(recvB[0:2], 16)
-                    s2 = int(recvB[2:4], 16)
-                    s3 = int(recvB[4:6], 16)
+                try:
+                    # special case status messages, as these can be very frequently
+                    # a compressed format is used
+                    if (recvB[0] & 0xC0) == 0xC0:     # marker for compressed servo status message
+                        config.log(f"status msg: {len(recvB)=}, {recvB[0]:#04x},{recvB[1]:#b},{recvB[2]:#04x}")
+                        # extract data from binary message
+                        pin = recvB[0] & 0x3f               # mask out marker bits
+                        newAssigned = recvB[1] & 0x01 > 0
+                        newMoving = recvB[1] & 0x02 > 0
+                        newAttached = recvB[1] & 0x04 > 0
+                        newAutoDetach = recvB[1] & 0x08 > 0
+                        newServoVerbose = recvB[1] & 0x10 > 0
+                        newTargetReached = recvB[1] & 0x20 > 0  # sent only once when target reached
+                        requestedPosition = int(recvB[2] - 0x10)  # to prevent value seen as lf 16 is added by the arduino
+                        currentPosition = requestedPosition
+                        ms = 0
+                        isFeedbackStatus = False
+                        if len(recvB) > 4:      # feedback servo message
+                            isFeedbackStatus = True
+                            currentPosition = (recvB[3] - 0x10)
+                            ms = (recvB[4] << 8) + recvB[5] - 4096 - 16
 
-                    # extract data from binary message
-                    pin          = s1 & 0x7f
-                    newPosition     = s2 - 40           # to prevent value seen as lf 40 is added by the arduino
-                    newAssigned     = s3 & 0x01 > 0
-                    newMoving       = s3 & 0x02 > 0
-                    newAttached     = s3 & 0x04 > 0
-                    newAutoDetach   = s3 & 0x08 > 0
-                    newServoVerbose = s3 & 0x10 > 0
-                    newTargetReached= s3 & 0x20 > 0    # sent only once when target reached
+                        servoUniqueId = (arduinoIndex * 100) + pin
+                        servoName = config.servoNameByArduinoAndPin[servoUniqueId]
 
+                        if newServoVerbose:
+                            config.log(f"servo update {servoName}, {recvB[0]:#04x},{recvB[1]:#04x},{recvB[2]:#04x}, arduino: {arduinoIndex},"
+                                       f" pin: {pin:2}, pos {requestedPosition:3}, assigned: {newAssigned}, moving {newMoving},"
+                                       f" attached {newAttached}, autoDetach: {newAutoDetach}, verbose: {newServoVerbose},"
+                                       f" {currentPosition=}, {ms=}")
 
-                    servoUniqueId = (arduinoIndex * 100) + pin
-                    servoName = config.servoNameByArduinoAndPin[servoUniqueId]
+                        prevCurrentDict = config.servoCurrentDictLocal.get(servoName)
+                        servoStatic = config.servoStaticDictLocal.get(servoName)
+                        servoDerived: skeletonClasses.ServoDerived = config.servoDerivedDictLocal.get(servoName)
+                        #expectedDegrees = mg.evalDegFromPos(servoStatic, servoDerived, requestedPosition)
 
-                    if newServoVerbose:
-                        config.log(f"servo update {servoName}, {s1:02X},{s2:02X},{s3:02X}, arduino: {arduinoIndex},"
-                                   f" pin: {pin:2}, pos {newPosition:3}, assigned: {newAssigned}, moving {newMoving},"
-                                   f" attached {newAttached}, autoDetach: {newAutoDetach}, verbose: {newServoVerbose}")
+                        servoCurrentLocal = config.servoCurrentDictLocal[servoName]
+                        servoCurrentLocal.assigned = newAssigned
+                        servoCurrentLocal.moving = newMoving
+                        servoCurrentLocal.attached = newAttached
+                        servoCurrentLocal.autoDetach = newAutoDetach
+                        servoCurrentLocal.verbose = newServoVerbose
+                        servoCurrentLocal.requestedPosition = requestedPosition
+                        servoCurrentLocal.currentPosition = currentPosition
+                        servoCurrentLocal.swiping = prevCurrentDict.swiping
+                        servoCurrentLocal.timeOfLastMoveRequest = prevCurrentDict.timeOfLastMoveRequest
+                        config.updateSharedServoCurrent(servoName, servoCurrentLocal)
 
-                    prevCurrentDict = config.servoCurrentDictLocal.get(servoName)
-                    servoStatic = config.servoStaticDictLocal.get(servoName)
-                    servoDerived: skeletonClasses.ServoDerived = config.servoDerivedDictLocal.get(servoName)
-                    newDegrees = mg.evalDegFromPos(servoStatic, servoDerived, newPosition)
+                        # check for feedback status
+                        if isFeedbackStatus:
+                            feedbackServo.addPosition(servoName, ms, requestedPosition, currentPosition)
+                            config.log(f"feedbackServo: {servoName=}, {ms=}, {requestedPosition=}, {currentPosition=}")
 
-                    servoCurrentLocal = config.servoCurrentDictLocal[servoName]
-                    servoCurrentLocal.assigned = newAssigned
-                    servoCurrentLocal.moving = newMoving
-                    servoCurrentLocal.attached = newAttached
-                    servoCurrentLocal.autoDetach = newAutoDetach
-                    servoCurrentLocal.verbose = newServoVerbose
-                    servoCurrentLocal.position = newPosition
-                    servoCurrentLocal.degrees = newDegrees
-                    servoCurrentLocal.swiping = prevCurrentDict.swiping
-                    servoCurrentLocal.timeOfLastMoveRequest = prevCurrentDict.timeOfLastMoveRequest
-                    config.updateSharedServoCurrent(servoName, servoCurrentLocal)
+                         # update ik if running
+                        if "stickFigure" in config.marvinShares.processDict.keys():
+                            if currentPosition != prevCurrentDict.position:
+                                config.marvinShares.ikUpdateQueue.put({'msgType': 'update'})
+                            #config.log(f"update sent to stickFigure")
 
-                     # update ik if running
-                    if "stickFigure" in config.marvinShares.processDict.keys():
-                        if newPosition != prevCurrentDict.position:
-                            config.marvinShares.ikUpdateQueue.put({'msgType': 'update'})
-                        #config.log(f"update sent to stickFigure")
+                        # check for move target postition reached
+                        if newTargetReached:
 
-                    # check for move target postition reached
-                    if newTargetReached:
+                            skeletonControl.saveServoPosition(servoName, currentPosition)
 
-                        skeletonControl.saveServoPosition(servoName, newPosition)
+                            if servoName != 'head.jaw': config.log(f"target reached: {servoName=}, {currentPosition=}")
+                            config.moveRequestBuffer.setServoInactive(servoName)
 
-                        config.log(f"target reached: {servoName=}, {recvB=}")
-                        config.moveRequestBuffer.setServoInactive(servoName)
+                            # check for feedback servo
+                            if servoName in config.servoFeedbackDictLocal:
+                                feedbackServo.dumpPositionList(servoName)
 
-                        # handle special case in swipe mode
-                        #config.log(f"{servoName}: not moving and attached, swiping: {prevCurrentDict.swiping}")
-                        if prevCurrentDict.swiping:
-                            nextPos = 0
-                            if abs(newPosition - servoStatic.minPos) < 3:
-                                nextPos = servoStatic.maxPos
-                            if abs(newPosition - servoStatic.maxPos) < 3:
-                                nextPos = servoStatic.minPos
-                            swipeMoveDuration = servoDerived.posRange * servoDerived.msPerPos * 2
-                            arduinoSend.requestServoPosition(servoName, nextPos, swipeMoveDuration)
+                            # handle special case in swipe mode
+                            #config.log(f"{servoName}: not moving and attached, swiping: {prevCurrentDict.swiping}")
+                            if prevCurrentDict.swiping:
+                                nextPos = 0
+                                if abs(currentPosition - servoStatic.minPos) < 3:
+                                    nextPos = servoStatic.maxPos
+                                if abs(currentPosition - servoStatic.maxPos) < 3:
+                                    nextPos = servoStatic.minPos
+                                swipeMoveDuration = servoDerived.posRange * servoDerived.msPerPos * 1.5
+                                arduinoSend.requestServoPosition(servoName, nextPos, swipeMoveDuration)
 
+                        continue
+
+                except Exception as e:
+                    config.log(f"serial message, unexpected format: {recvB}, ignored, {e=}")
                     continue
 
-
-                # now process all other messages not starting with 0x80 byte
+                # now process all other messages starting with first byte < 0xC0
                 try:
                     recv = recvB.decode()
                 except:
@@ -132,49 +148,3 @@ def readMessages(arduinoIndex):
                 # config.log(f"line read {recv}")
                 # msgID = recvB[0:3].decode()
                 config.log(f"<-I{arduinoIndex} " + recv[:-1], publish=False)
-
-                """
-                if msgID == "!A0":  # "arduino ready"
-                    # lower arduino, index 0, COM7 should reply with !A0
-                    config.log(f"!A0 response from {arduinoIndex=}")
-
-                    if arduinoIndex == 1:
-                        config.log(f"has left arduino, arduinoIndex 0, a GND connection on Pin 50?")
-                        config.log(f"if so, the system has a wrong device/COM-Port assignment")
-                        config.log(f"wrong arduino assignment, change in connectWithArduinos, going down")
-                        os._exit(3)
-
-                    #config.share.arduinoDict.get(arduino)['connected'] = True
-                    config.log(f"ready message from arduino {config.arduinoDictLocal[arduinoIndex]['arduinoName']} received")
-                    config.arduinoDictLocal[arduinoIndex]['connected'] = True
-                    #updStmt = (mg.SharedDataItems.ARDUINO, arduinoIndex, config.arduinoDictLocal[arduinoIndex])
-                    msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
-                            'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
-                    config.updateSharedDict(msg)
-
-                elif msgID == "!A1":  # "arduino ready" from upper arduino
-                    # upper arduino, index 1, COM6 should reply with !A1
-
-                    config.log(f"!A1 response from arduino A{arduinoIndex}")
-
-                    if arduinoIndex == 0:
-                        config.log(f"has left arduino, arduinoIndex 0, a GND connection on Pin 50?")
-                        config.log(f"if so, the system has a wrong device/COM-Port assignment")
-                        config.log(f"wrong arduino assignment, change in connectWithArduino, going down")
-                        os._exit(4)
-
-                    # config.share.arduinoDict.get(arduino)['connected'] = True
-                    config.log(
-                        f"ready message from arduino {config.arduinoDictLocal[arduinoIndex]['arduinoName']} received")
-                    config.arduinoDictLocal[arduinoIndex]['connected'] = True
-                    #updStmt = (mg.SharedDataItems.ARDUINO, arduinoIndex, config.arduinoDictLocal[arduinoIndex])
-                    msg = {'cmd': mg.SharedDataItems.ARDUINO, 'sender': config.processName,
-                           'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
-                    config.updateSharedDict(msg)
-
-                else:
-                    try:
-                        config.log(f"<-I{arduinoIndex} " + recv[:-1], publish=False)
-                    except:
-                        config.log(f"Unexpected error on reading messages: {sys.exc_info()[0]}")
-                """

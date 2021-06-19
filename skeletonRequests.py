@@ -6,7 +6,7 @@ from marvinglobal import marvinglobal as mg
 from marvinglobal import skeletonClasses
 
 #    def assign(self, requestQueue, servoName, initialPosition):
-#        requestQueue.put({'cmd': 'assign', 'servoName': servoName, 'position': initialPosition})
+#        requestQueue.put({'msgType': 'assign', 'servoName': servoName, 'position': initialPosition})
 def assign(request):
     arduinoSend.servoAssign(request['servoName'], request['position'])
 
@@ -15,46 +15,53 @@ def reassign(msg):
     # when servo definitions are changed through the gui the local
     # dict needs to use the new shared dict values
     servoName = msg['info']['servoName']
-    sharedServoStatic = config.marvinShares.servoStaticDict.get(servoName)
+    servoStaticDict = config.marvinShares.servoDict.get(mg.SharedDataItems.SERVO_STATIC)
+    sharedServoStatic = servoStaticDict.get(servoName)
     config.servoStaticDictLocal[servoName] = copy.deepcopy(sharedServoStatic)
-
-    sharedServoDerived = config.marvinShares.servoDerivedDict.get(servoName)
+    servoDerivedDict = config.marvinShares.servoDict.get(mg.SharedDataItems.SERVO_DERIVED)
+    sharedServoDerived = servoDerivedDict.get(servoName)
     config.servoDerivedDictLocal[servoName] = copy.deepcopy(sharedServoDerived)
 
     currentPos = config.servoCurrentDictLocal.get(servoName).position
     arduinoSend.servoAssign(servoName, currentPos)
 
 #    def stop(self, requestQueue, servoName):
-#        requestQueue.put({'cmd': 'stop', 'servoName': servoName})
+#        requestQueue.put({'msgType': 'stop', 'servoName': servoName})
 def stop(request):
     arduinoSend.requestServoStop(request['servoName'])
 
 # move servo to position 0..180
 def position(request):
     #config.log(f"{request=}")
-    arduinoSend.requestServoPosition(request['servoName'], request['position'], request['duration'],request['sequential'])
+    if "sequential" in request:
+        arduinoSend.requestServoPosition(request['servoName'], request['position'], request['duration'],request['sequential'])
+    else:
+        arduinoSend.requestServoPosition(request['servoName'], request['position'], request['duration'], False)
 
 # move servo to requested degrees
 def requestDegrees(request):
-    arduinoSend.requestServoDegrees(request['servoName'], request['degrees'], request['duration'], request['sequential'])
+    if "sequential" in request:
+        arduinoSend.requestServoDegrees(request['servoName'], request['degrees'], request['duration'], request['sequential'])
+    else:
+        arduinoSend.requestServoDegrees(request['servoName'], request['degrees'], request['duration'], False)
 
 #    def setVerbose(self, requestQueue, servoName, verbose):
-#        requestQueue.put({'cmd': 'setVerbose', 'servoName': servoName, 'verbose': verbose})
-def setVerboseRequest(request):
+#        requestQueue.put({'msgType': 'setVerbose', 'servoName': servoName, 'verbose': verbose})
+def requestVerboseState(request):
     arduinoSend.setVerbose(request['servoName'], request['verboseOn'])
 
 #    def allServoStop(self, requestQueue):
-#        requestQueue.put({'cmd': 'allServoStop'})
+#        requestQueue.put({'msgType': 'allServoStop'})
 def allServoStop(request):
     arduinoSend.requestAllServosStop()
 
 #    def allServoRest(self, requestQueue):
-#        requestQueue.put({'cmd': 'allServoRest'})
+#        requestQueue.put({'msgType': 'allServoRest'})
 def allServoRest(request):
     arduinoSend.requestAllServosRest()
 
 #    def setAutoDetach(self, requestQueue, servoName, duration):
-#        requestQueue.put({'cmd': 'setAutoDetach', 'servoName': servoName, 'duration': duration})
+#        requestQueue.put({'msgType': 'setAutoDetach', 'servoName': servoName, 'duration': duration})
 def setAutoDetach(request):
     arduinoSend.setAutoDetach(request['servoName'], request['duration']/1000)
 
@@ -94,7 +101,7 @@ def stopSwipe(request):
     servoCurrentLocal:skeletonClasses.ServoCurrent = config.servoCurrentDictLocal.get(servoName)
     servoCurrentLocal.swiping = False
     config.updateSharedServoCurrent(servoName, servoCurrentLocal)
-    #msg = {'cmd': mg.SharedDataItems.SERVO_CURRENT, 'sender': config.processName,
+    #msg = {'msgType': mg.SharedDataItems.SERVO_CURRENT, 'sender': config.processName,
     #       'info': {'servoName': servoName, 'data': servoCurrentLocal.__dict__}}
     #config.updateSharedDict(msg)
     arduinoSend.requestRest(servoName)

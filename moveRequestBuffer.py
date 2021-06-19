@@ -1,14 +1,16 @@
 
+import time
 import config
 import arduinoSend
-from marvinglobal import marvinglobal as mg
+import feedbackServo
+#from marvinglobal import marvinglobal as mg
 
 class MoveRequestBuffer:
 
-    def __init__(self):
+    def __init__(self, verbose:bool=False):
         self.servoRequestList = []
         self.servoActiveList = []
-        self.verbose = True
+        self.verbose = verbose
         self.superVerbose = False
         self.excludedServos = ['head.jaw']
 
@@ -66,7 +68,11 @@ class MoveRequestBuffer:
 
         servoName = request['servoName']
         if servoName in self.excludedServos:
-            if self.verbose: config.log(f"add request for servo that is in the exclude list")
+            if self.verbose: config.log(f"add request for servo that is in the moveRequestBuffer exclude list")
+
+            config.log(f"send request directly to arduino {request=}")
+            arduinoSend.sendArduinoCommand(request['arduino'], request['msg'])
+
             return
 
         self.servoRequestList.append(request)
@@ -82,11 +88,11 @@ class MoveRequestBuffer:
         :param servoName:
         :return:
         """
-        if self.verbose: config.log(f"remove servo from moveRequestBuffer {servoName:20s}, {config.servoRequestList=}")
-
         if servoName in self.excludedServos:
-            if self.verbose: config.log(f"remove request for servo that is in the exclude list")
+            if self.verbose: config.log(f"remove request for servo that is in the moveRequestBuffer exclude list")
             return
+
+        if self.verbose: config.log(f"remove servo from moveRequestBuffer {servoName:20s}, {self.servoRequestList=}")
 
         for index, item in enumerate(self.servoRequestList):
             if item['servoName'] == servoName:
@@ -114,9 +120,22 @@ class MoveRequestBuffer:
                     self.setServoActive(item['servoName'])
                     config.log(f"send request to arduino {item=}")
                     arduinoSend.sendArduinoCommand(item['arduino'], item['msg'])
-                    self.servoRequestList.pop(index)
+                    config.log(f"{len(self.servoRequestList)=}, {index=}")
+
+                    # check for feedback servo
+                    if item['servoName'] in config.servoFeedbackDictLocal:
+                        feedbackServo.clearPositionList(item['servoName'], item['speed'])
+
+                    try:
+                        self.servoRequestList.pop(index)
+                    except Exception as e:
+                        config.log(f"exception in servoRequestList")
                     listChanged = True
                     if self.superVerbose: config.log(f"remaining requests: {self.servoRequestList=}")
                     break
 
 
+def monitorMoveRequestBuffer():
+    while True:
+        config.moveRequestBuffer.checkForExecutableRequests()
+        time.sleep(0.1)
