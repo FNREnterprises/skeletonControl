@@ -124,7 +124,7 @@ class MoveRequestBuffer:
 
                     # check for feedback servo
                     if item['servoName'] in config.servoFeedbackDictLocal:
-                        feedbackServo.clearPositionList(item['servoName'], item['speed'])
+                        feedbackServo.clearPositionList(item['servoName'], item['fromPos'], item['toPos'], item['speed'])
 
                     try:
                         self.servoRequestList.pop(index)

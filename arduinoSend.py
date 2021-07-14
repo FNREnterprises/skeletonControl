@@ -49,9 +49,8 @@ restDeg: {servoStatic.restDeg:3}, autoDetach: {servoStatic.autoDetach:4.0f}, inv
 
 def servoFeedbackDefinitions(arduinoIndex, pin, servoFeedback):
     msg = f"8,{pin},{servoFeedback.i2cMultiplexerAddress},{servoFeedback.i2cMultiplexerChannel},"
-    msg += f"{servoFeedback.speedACalcType},{servoFeedback.speedAFactor},{servoFeedback.speedAOffset},"
-    msg += f"{servoFeedback.speedBCalcType},{servoFeedback.speedBFactor},{servoFeedback.speedBOffset},"
-    msg += f"{servoFeedback.degPerPos},{servoFeedback.servoSpeedRange},\n"
+    msg += f"{servoFeedback.kp},{servoFeedback.ki},{servoFeedback.kd},"
+    msg += f"{servoFeedback.degPerPos},{servoFeedback.feedbackInverted},\n"
 
     sendArduinoCommand(arduinoIndex, msg)
 
@@ -77,16 +76,16 @@ def requestServoPosition(servoName, newPosition, duration, sequential=True):
     if servoName == "head.jaw":
         deltaPos = abs(config.lastRequestedJawPosition - newPosition)
         minDuration = servoDerived.msPerPos * deltaPos
-        #config.log(f"jaw: {config.lastRequestedJawPosition}, {servoCurrent.position}, {sequential=}")
+        #config.log(f"jaw: {config.lastRequestedJawPosition}, {servoCurrent.currentPosition}, {sequential=}")
         config.lastRequestedJawPosition = newPosition
     else:
-        deltaPos = abs(servoCurrent.position - newPosition)
+        deltaPos = abs(servoCurrent.currentPosition - newPosition)
         minDuration = servoDerived.msPerPos * deltaPos
         config.log(f"request servo position for {servoName}, arduino {servoStatic.arduinoIndex}, degrees: {degrees}, position: {newPosition:.0f}, duration: {duration:.0f}", publish=False)
 
     # verify duration
     if duration < minDuration:
-        #config.log(f"{servoName}: duration increased, deltaPos: {deltaPos:.0f}, msPerPos: {servoDerived.msPerPos:.1f}, from: {duration:.0f} to: {minDuration:.0f}")
+        config.log(f"move duration increased {servoName}, deltaPos: {deltaPos:.0f}, msPerPos: {servoDerived.msPerPos:.1f}, from: {duration:.0f} to: {minDuration:.0f}")
         duration = minDuration
     speed = minDuration/duration    # >0..1
     servoCurrent.timeOfLastMoveRequest = time.time()
@@ -99,11 +98,13 @@ def requestServoPosition(servoName, newPosition, duration, sequential=True):
             {'servoName': servoName,
              'arduino': servoStatic.arduinoIndex,
              'msg': msg,
-             'speed': speed})
+             'fromPos': servoCurrent.currentPosition,
+             'toPos': newPosition,
+             'speed': speed
+             })
     else:
         # if servo is still moving arduino will terminate the current move and set the new target
         sendArduinoCommand(servoStatic.arduinoIndex, msg)
-
 
 
 def requestServoDegrees(servoName, degrees, duration, sequential=True):
@@ -160,15 +161,15 @@ def setPosition(servoName: str, newPos: int):
     sendArduinoCommand(servoStatic.arduinoIndex, msg)
 
 
-def setVerbose(servoName: str, state: bool):
-    config.log(f"setVerbose through servoName: {servoName} verbose set to {state}")
+def setVerbose(servoName: str, newState: bool):
+    config.log(f"setVerbose through servoName: {servoName} verbose set to {newState}")
     servoStatic = config.servoStaticDictLocal.get(servoName)
     servoCurrent = config.servoCurrentDictLocal.get(servoName)
-    verboseState = 1 if state else 0
+    verboseState = 1 if newState else 0
     msg = f"7,{servoStatic.pin},{verboseState},\n"
     sendArduinoCommand(servoStatic.arduinoIndex, msg)
 
-    servoCurrent.verbose = state
+    servoCurrent.verbose = newState
     config.updateSharedServoCurrent(servoName, servoCurrent)
 
 
@@ -184,12 +185,7 @@ def requestRest(servoName: str):
 def requestAllServosRest():
     config.log(f"all servos rest requested")
     for servoName, servoStatic in config.servoStaticDictLocal.items():
-        if servoStatic.enabled:
-            servoDerived = config.servoDerivedDictLocal.get(servoName)
-            pos = mg.evalPosFromDeg(servoStatic, servoDerived, servoStatic.restDeg)
-            requestServoPosition(servoName, pos, 1500)
-            time.sleep(0.1)
-            #config.log(f"rest position for {servoName}, pos: {pos}")
+        requestRest(servoName)
 
 
 def pinHigh(pinList):

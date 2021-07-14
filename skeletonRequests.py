@@ -4,6 +4,7 @@ import config
 import arduinoSend
 from marvinglobal import marvinglobal as mg
 from marvinglobal import skeletonClasses
+import feedbackServo
 
 #    def assign(self, requestQueue, servoName, initialPosition):
 #        requestQueue.put({'msgType': 'assign', 'servoName': servoName, 'position': initialPosition})
@@ -22,7 +23,7 @@ def reassign(msg):
     sharedServoDerived = servoDerivedDict.get(servoName)
     config.servoDerivedDictLocal[servoName] = copy.deepcopy(sharedServoDerived)
 
-    currentPos = config.servoCurrentDictLocal.get(servoName).position
+    currentPos = config.servoCurrentDictLocal.get(servoName).currentPosition
     arduinoSend.servoAssign(servoName, currentPos)
 
 #    def stop(self, requestQueue, servoName):
@@ -105,5 +106,10 @@ def stopSwipe(request):
     #       'info': {'servoName': servoName, 'data': servoCurrentLocal.__dict__}}
     #config.updateSharedDict(msg)
     arduinoSend.requestRest(servoName)
+
+
+def updatePIDValues(request):
+    servoName = request['servoName']
+    feedbackServo.updatePIDValues(servoName, request['kp'], request['ki'], request['kd'])
 
 # test git 2

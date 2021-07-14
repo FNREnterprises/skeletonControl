@@ -24,6 +24,7 @@ servoFeedbackDictLocal = {}
 
 persistedServoPositionsLocal = {}
 servoPositionsChanged = False
+servoPositionsSavedTime = 0
 
 servoNameByArduinoAndPin = {}   # a dictionary to access servos by Arduino and Id
 

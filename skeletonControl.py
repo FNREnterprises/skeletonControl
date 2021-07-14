@@ -9,9 +9,8 @@ import queue
 from marvinglobal import marvinglobal as mg
 from marvinglobal import marvinShares
 from marvinglobal import skeletonClasses
-
+import feedbackServo
 import config
-
 import arduinoSend
 import arduinoReceive
 import skeletonRequests
@@ -32,49 +31,33 @@ def assignServos(arduinoIndex):
 
         if servoStatic.enabled and servoStatic.arduinoIndex == arduinoIndex:
 
-            config.log(f"servo assign {servoName}, last persisted position: {config.servoCurrentDictLocal.get(servoName).position}")
-            arduinoSend.servoAssign(servoName, config.servoCurrentDictLocal.get(servoName).position)
+            config.log(f"servo assign {servoName}, last persisted position: {config.servoCurrentDictLocal.get(servoName).currentPosition}")
+            arduinoSend.servoAssign(servoName, config.servoCurrentDictLocal.get(servoName).currentPosition)
             time.sleep(0.2)     # add delay as arduino gets overwhelmed otherwise
 
     # then move the servos to the last persisted position
     for servoName, servoStatic in config.servoStaticDictLocal.items():
 
         if servoStatic.enabled and servoStatic.arduinoIndex == arduinoIndex:
-            arduinoSend.requestServoPosition(servoName, config.servoCurrentDictLocal.get(servoName).position, 1000)
-
-def setupFeedbackServos(arduinoIndex):
-    """
-    feedback servo definitions are stored in a json file
-    for each servo handled by the <arduinoIndex> send the definitions to the arduino
-    :param arduinoIndex:
-    :return:
-    """
-
-    config.log(f"send feedback servo definitions to arduino {arduinoIndex}")
-
-    # send servo definition data to arduino
-    for servoName, servoFeedback in config.servoFeedbackDictLocal.items():
-        servoStatic = config.servoStaticDictLocal[servoName]
-        if servoStatic.enabled and servoStatic.arduinoIndex == arduinoIndex:
-
-            config.log(f"servo feedback definitions {servoName}")
-            arduinoSend.servoFeedbackDefinitions(arduinoIndex, servoStatic.pin, servoFeedback)
-            time.sleep(0.2)     # add delay as arduino gets overwhelmed otherwise
+            arduinoSend.requestServoPosition(servoName, config.servoCurrentDictLocal.get(servoName).currentPosition, 1000)
 
 
-def saveServoPosition(servoName, position, maxDelay=10):
+def saveServoPosition(servoName, position):
     '''
     save current servo position to json file if last safe time differs
     more than maxDelay seconds
     '''
-    config.persistedServoPositionsLocal[servoName] = position
-    config.servoPositionsChanged = True
+    if config.persistedServoPositionsLocal[servoName] != position:
+        config.persistedServoPositionsLocal[servoName] = position
+        config.servoPositionsChanged = True
+        config.log(f"update changed servoPosition, {servoName=}, {position=}")
 
 
 def persistServoPositions():
 
     with open(mg.PERSISTED_SERVO_POSITIONS_FILE, 'w') as outfile:
         json.dump(config.persistedServoPositionsLocal, outfile, indent=2)
+        config.log("persist changed servo positions to file")
 
 
 def initServoControl():
@@ -158,35 +141,8 @@ def initServoControl():
 
         config.log(f"shared servo data updated")
 
-    def loadServoFeedbackDefinitions():
-        # feedback definitions
-        config.log(f"open servo feedback definition file {mg.SERVO_FEEDBACK_DEFINITIONS_FILE}")
-        try:
-            with open(mg.SERVO_FEEDBACK_DEFINITIONS_FILE, 'r') as infile:
-                servoFeedbackDefinitions = json.load(infile)
-            with open(mg.SERVO_FEEDBACK_DEFINITIONS_FILE + ".bak", 'w') as outfile:
-                json.dump(servoFeedbackDefinitions, outfile, indent=2)
-
-        except Exception as e:
-            config.log(f"problem loading {mg.SERVO_FEEDBACK_DEFINITIONS_FILE} file, try using the backup file, {e}")
-            os._exit(6)
-
-        for servoName, servoFeedbackData in servoFeedbackDefinitions.items():
-            servoFeedback = skeletonClasses.ServoFeedback()   # inst of servoFeedbackData class
-            servoFeedback.updateValues(servoFeedbackData)
-            config.servoFeedbackDictLocal.update({servoName: servoFeedback})
-
-            # add servoFeedback to shared data
-            #updStmt = (mg.SharedDataItems.SERVO_TYPE, servoTypeName, dict(servoType.__dict__))
-            msg = {'msgType': mg.SharedDataItems.SERVO_FEEDBACK, 'sender': config.processName,
-                   'info': {'servoName': servoName, 'data': dict(servoFeedback.__dict__)}}
-            config.updateSharedDict(msg)
-
-        config.log(f"servoFeedbackDict loaded")
-
 
     def loadServoPositions():
-
         # global persistedServoPositions, servoCurrentDict
 
         config.log("load last known servo positions")
@@ -219,7 +175,7 @@ def initServoControl():
 
             # create ServoCurrent object
             servoCurrent = skeletonClasses.ServoCurrent()
-            servoCurrent.position = p
+            servoCurrent.currentPosition = p
 
             # set degrees from pos
             # servoCurrent.degrees = mg.evalDegFromPos(servoName, p)
@@ -247,7 +203,7 @@ def initServoControl():
         servoDerived.updateValues(servoStatic, servoType)
         config.servoDerivedDictLocal.update({servoName: servoDerived})
 
-    loadServoFeedbackDefinitions()
+    feedbackServo.loadServoFeedbackDefinitions()
 
     loadServoPositions()
     saveServoStaticDict()
@@ -256,13 +212,6 @@ def initServoControl():
     for servoName, servoStatic in config.servoStaticDictLocal.items():
         config.servoNameByArduinoAndPin.update({config.servoDerivedDictLocal[servoName].servoUniqueId: servoName})
     config.log(f"lookup list for servo by arduino and pin created")
-
-    # assign servos
-    #for servoName, servoStatic in config.servoStaticDictLocal.items():
-    #    servoDerived:skeletonClasses.ServoDerived = config.servoDerivedDictLocal[servoName]
-    #    position = mg.evalPosFromDeg(servoStatic, servoDerived, servoStatic.restDeg)
-    #    arduinoSend.servoAssign(servoName, position)
-    #    time.sleep(0.1)
 
 
 def saveServoStaticDict():
@@ -445,10 +394,10 @@ if __name__ == "__main__":
     for arduinoIndex, arduinoData in config.arduinoDictLocal.items():
         config.log(f"assign servos to arduino {arduinoIndex}, {arduinoData['arduinoName']=}, {arduinoData['comPort']=}")
         assignServos(arduinoIndex)
-        setupFeedbackServos(arduinoIndex)
+        feedbackServo.setupFeedbackServos(arduinoIndex)
 
     # set verbose mode for servos to report more details
-    arduinoSend.setVerbose('rightArm.bicep', True)
+    arduinoSend.setVerbose('leftArm.shoulder', True)
 
     # start thread for monitoring the moveRequestBuffer
     requestBufferThread = threading.Thread(target=moveRequestBuffer.monitorMoveRequestBuffer, args={})
@@ -462,8 +411,11 @@ if __name__ == "__main__":
     while True:
 
         if config.servoPositionsChanged:
-            persistServoPositions()
-            config.servoPositionsChanged = False
+            secondsSinceLastSave = time.time() - config.servoPositionsSavedTime
+            if secondsSinceLastSave > 1:
+                persistServoPositions()
+                config.servoPositionsSavedTime = time.time()
+                config.servoPositionsChanged = False
 
         try:
             config.marvinShares.updateProcessDict(config.processName)

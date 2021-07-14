@@ -63,28 +63,28 @@ def readMessages(arduinoIndex):
                         newAutoDetach = recvB[1] & 0x08 > 0
                         newServoVerbose = recvB[1] & 0x10 > 0
                         newTargetReached = recvB[1] & 0x20 > 0  # sent only once when target reached
-                        requestedPosition = int(recvB[2] - 0x10)  # to prevent value seen as lf 16 is added by the arduino
-                        currentPosition = requestedPosition
+                        currentPosition = int(recvB[2] - 0x10)  # to prevent value seen as lf 16 is added by the arduino
+                        servoWritePosition = currentPosition
+                        wantedPosition = currentPosition
                         ms = 0
                         isFeedbackStatus = False
                         if len(recvB) > 4:      # feedback servo message
                             isFeedbackStatus = True
-                            currentPosition = (recvB[3] - 0x10)
-                            ms = (recvB[4] << 8) + recvB[5] - 4096 - 16
-
+                            ms = (recvB[3] << 8) + recvB[4] - 4096 - 16
+                            servoWritePosition = (recvB[5] - 0x10)
+                            wantedPosition = (recvB[6] - 0x10)
+                            config.log(f"feedback pos: {currentPosition=}, {ms=},{servoWritePosition=},{wantedPosition=}")
                         servoUniqueId = (arduinoIndex * 100) + pin
                         servoName = config.servoNameByArduinoAndPin[servoUniqueId]
 
                         if newServoVerbose:
                             config.log(f"servo update {servoName}, {recvB[0]:#04x},{recvB[1]:#04x},{recvB[2]:#04x}, arduino: {arduinoIndex},"
-                                       f" pin: {pin:2}, pos {requestedPosition:3}, assigned: {newAssigned}, moving {newMoving},"
-                                       f" attached {newAttached}, autoDetach: {newAutoDetach}, verbose: {newServoVerbose},"
-                                       f" {currentPosition=}, {ms=}")
+                                       f" pin: {pin:2}, pos {currentPosition:3}, assigned: {newAssigned}, moving {newMoving},"
+                                       f" attached {newAttached}, autoDetach: {newAutoDetach}, verbose: {newServoVerbose}")
 
                         prevCurrentDict = config.servoCurrentDictLocal.get(servoName)
                         servoStatic = config.servoStaticDictLocal.get(servoName)
                         servoDerived: skeletonClasses.ServoDerived = config.servoDerivedDictLocal.get(servoName)
-                        #expectedDegrees = mg.evalDegFromPos(servoStatic, servoDerived, requestedPosition)
 
                         servoCurrentLocal = config.servoCurrentDictLocal[servoName]
                         servoCurrentLocal.assigned = newAssigned
@@ -92,34 +92,39 @@ def readMessages(arduinoIndex):
                         servoCurrentLocal.attached = newAttached
                         servoCurrentLocal.autoDetach = newAutoDetach
                         servoCurrentLocal.verbose = newServoVerbose
-                        servoCurrentLocal.requestedPosition = requestedPosition
+                        servoCurrentLocal.millisAfterMoveStart = ms
                         servoCurrentLocal.currentPosition = currentPosition
+                        servoCurrentLocal.servoWritePosition = servoWritePosition
+                        servoCurrentLocal.wantedPosition = wantedPosition
                         servoCurrentLocal.swiping = prevCurrentDict.swiping
                         servoCurrentLocal.timeOfLastMoveRequest = prevCurrentDict.timeOfLastMoveRequest
                         config.updateSharedServoCurrent(servoName, servoCurrentLocal)
 
-                        # check for feedback status
-                        if isFeedbackStatus:
-                            feedbackServo.addPosition(servoName, ms, requestedPosition, currentPosition)
-                            config.log(f"feedbackServo: {servoName=}, {ms=}, {requestedPosition=}, {currentPosition=}")
+                        if servoName != "head.jaw":
+                            skeletonControl.saveServoPosition(servoName, currentPosition)
+
+                        # check for feedback status and moving and add to move log
+                        if isFeedbackStatus and servoCurrentLocal.moving:
+                            feedbackServo.addPosition(servoName, ms, currentPosition, servoWritePosition, wantedPosition)
+                            config.log(f"feedbackServo: {servoName=}, {ms=}, {servoWritePosition=}, {currentPosition=}")
 
                          # update ik if running
                         if "stickFigure" in config.marvinShares.processDict.keys():
-                            if currentPosition != prevCurrentDict.position:
+                            if currentPosition != prevCurrentDict.currentPosition:
                                 config.marvinShares.ikUpdateQueue.put({'msgType': 'update'})
                             #config.log(f"update sent to stickFigure")
 
                         # check for move target postition reached
                         if newTargetReached:
 
-                            skeletonControl.saveServoPosition(servoName, currentPosition)
-
                             if servoName != 'head.jaw': config.log(f"target reached: {servoName=}, {currentPosition=}")
                             config.moveRequestBuffer.setServoInactive(servoName)
 
                             # check for feedback servo
                             if servoName in config.servoFeedbackDictLocal:
-                                feedbackServo.dumpPositionList(servoName)
+                                config.log(f"targetReached, feedbackPositions: {len(config.feedbackPositions[servoName]['values'])}")
+                                if len(config.feedbackPositions[servoName]['values']) > 5:
+                                    feedbackServo.dumpPositionList(servoName)
 
                             # handle special case in swipe mode
                             #config.log(f"{servoName}: not moving and attached, swiping: {prevCurrentDict.swiping}")
