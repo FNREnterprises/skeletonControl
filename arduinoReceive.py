@@ -23,6 +23,9 @@ def readMessages(arduinoIndex):
            'info': {'arduinoIndex': arduinoIndex, 'data': config.arduinoDictLocal[arduinoIndex]}}
     config.updateSharedDict(msg)
 
+    # init prevSent
+    prevSent = skeletonClasses.ServoCurrent()
+
     while True:
         if config.arduinoConn[arduinoIndex] is None:
             time.sleep(0.1)
@@ -54,7 +57,7 @@ def readMessages(arduinoIndex):
                     # special case status messages, as these can be very frequently
                     # a compressed format is used
                     if (recvB[0] & 0xC0) == 0xC0:     # marker for compressed servo status message
-                        config.log(f"status msg: {len(recvB)=}, {recvB[0]:#04x},{recvB[1]:#b},{recvB[2]:#04x}")
+                        # config.log(f"status msg: {len(recvB)=}, {recvB[0]:#04x},{recvB[1]:#b},{recvB[2]:#04x}")
                         # extract data from binary message
                         pin = recvB[0] & 0x3f               # mask out marker bits
                         newAssigned = recvB[1] & 0x01 > 0
@@ -65,15 +68,15 @@ def readMessages(arduinoIndex):
                         newTargetReached = recvB[1] & 0x20 > 0  # sent only once when target reached
                         currentPosition = int(recvB[2] - 0x10)  # to prevent value seen as lf 16 is added by the arduino
                         servoWritePosition = currentPosition
-                        wantedPosition = currentPosition
-                        ms = 0
+                        plannedPosition = currentPosition
+                        ms = 0      # non-feedback servos do not report millis
                         isFeedbackStatus = False
                         if len(recvB) > 4:      # feedback servo message
                             isFeedbackStatus = True
                             ms = (recvB[3] << 8) + recvB[4] - 4096 - 16
                             servoWritePosition = (recvB[5] - 0x10)
-                            wantedPosition = (recvB[6] - 0x10)
-                            config.log(f"feedback pos: {currentPosition=}, {ms=},{servoWritePosition=},{wantedPosition=}")
+                            plannedPosition = (recvB[6] - 0x10)
+                            config.log(f"feedback pos: {currentPosition=}, {ms=},{servoWritePosition=},{plannedPosition=}")
                         servoUniqueId = (arduinoIndex * 100) + pin
                         servoName = config.servoNameByArduinoAndPin[servoUniqueId]
 
@@ -82,7 +85,7 @@ def readMessages(arduinoIndex):
                                        f" pin: {pin:2}, pos {currentPosition:3}, assigned: {newAssigned}, moving {newMoving},"
                                        f" attached {newAttached}, autoDetach: {newAutoDetach}, verbose: {newServoVerbose}")
 
-                        prevCurrentDict = config.servoCurrentDictLocal.get(servoName)
+                        prevCurrent = config.servoCurrentDictLocal.get(servoName)
                         servoStatic = config.servoStaticDictLocal.get(servoName)
                         servoDerived: skeletonClasses.ServoDerived = config.servoDerivedDictLocal.get(servoName)
 
@@ -94,30 +97,50 @@ def readMessages(arduinoIndex):
                         servoCurrentLocal.verbose = newServoVerbose
                         servoCurrentLocal.millisAfterMoveStart = ms
                         servoCurrentLocal.currentPosition = currentPosition
+                        servoCurrentLocal.currentDegrees = mg.evalDegFromPos(servoStatic, servoDerived, currentPosition)
                         servoCurrentLocal.servoWritePosition = servoWritePosition
-                        servoCurrentLocal.wantedPosition = wantedPosition
-                        servoCurrentLocal.swiping = prevCurrentDict.swiping
-                        servoCurrentLocal.timeOfLastMoveRequest = prevCurrentDict.timeOfLastMoveRequest
-                        config.updateSharedServoCurrent(servoName, servoCurrentLocal)
+                        servoCurrentLocal.plannedPosition = plannedPosition
+                        servoCurrentLocal.swiping = prevCurrent.swiping
+                        servoCurrentLocal.timeOfLastMoveRequest = prevCurrent.timeOfLastMoveRequest
 
-                        if servoName != "head.jaw":
-                            skeletonControl.saveServoPosition(servoName, currentPosition)
+                        # limit updates to the shared copy and the persisted position
+                        # do not update for high frequency servo (jaw)
+                        # only update when position has changed
+                        # only update max 5 times per second
+                        if servoCurrentLocal.currentPosition != prevSent.currentPosition:
+                            if time.time() - prevSent.timeOfLastShareUpdate > 0.2:
+                                servoCurrentLocal.timeOfLastShareUpdate = time.time()
+                                config.updateSharedServoCurrent(servoName, servoCurrentLocal)
+                                prevSent = servoCurrentLocal
 
-                        # check for feedback status and moving and add to move log
+                                if servoName != "head.jaw":
+                                    skeletonControl.markServoPositionAsChanged(servoName, currentPosition)
+
+
+                        # check for feedback servo
+                        # if servo is moving add positions to the move log
                         if isFeedbackStatus and servoCurrentLocal.moving:
-                            feedbackServo.addPosition(servoName, ms, currentPosition, servoWritePosition, wantedPosition)
+                            feedbackServo.addPosition(servoName, ms, currentPosition, servoWritePosition, plannedPosition)
                             config.log(f"feedbackServo: {servoName=}, {ms=}, {servoWritePosition=}, {currentPosition=}")
 
                          # update ik if running
                         if "stickFigure" in config.marvinShares.processDict.keys():
-                            if currentPosition != prevCurrentDict.currentPosition:
+                            if currentPosition != prevCurrent.currentPosition:
                                 config.marvinShares.ikUpdateQueue.put({'msgType': 'update'})
                             #config.log(f"update sent to stickFigure")
 
                         # check for move target postition reached
                         if newTargetReached:
 
-                            if servoName != 'head.jaw': config.log(f"target reached: {servoName=}, {currentPosition=}")
+                            servoCurrentLocal.timeOfLastShareUpdate = time.time()
+                            config.updateSharedServoCurrent(servoName, servoCurrentLocal)
+                            prevSent = servoCurrentLocal
+
+                            # do not log high movmement frequency servos
+                            if servoName != 'head.jaw':
+                                config.log(f"target reached: {servoName=}, {currentPosition=}, currentDegrees={servoCurrentLocal.currentDegrees}")
+                                skeletonControl.markServoPositionAsChanged(servoName, currentPosition)
+
                             config.moveRequestBuffer.setServoInactive(servoName)
 
                             # check for feedback servo
@@ -128,13 +151,13 @@ def readMessages(arduinoIndex):
 
                             # handle special case in swipe mode
                             #config.log(f"{servoName}: not moving and attached, swiping: {prevCurrentDict.swiping}")
-                            if prevCurrentDict.swiping:
+                            if prevCurrent.swiping:
                                 nextPos = 0
                                 if abs(currentPosition - servoStatic.minPos) < 3:
                                     nextPos = servoStatic.maxPos
                                 if abs(currentPosition - servoStatic.maxPos) < 3:
                                     nextPos = servoStatic.minPos
-                                swipeMoveDuration = servoDerived.posRange * servoDerived.msPerPos * 1.5
+                                swipeMoveDuration = servoDerived.posRange * servoDerived.msPerPos * 4
                                 arduinoSend.requestServoPosition(servoName, nextPos, swipeMoveDuration)
 
                         continue

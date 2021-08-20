@@ -42,7 +42,7 @@ def assignServos(arduinoIndex):
             arduinoSend.requestServoPosition(servoName, config.servoCurrentDictLocal.get(servoName).currentPosition, 1000)
 
 
-def saveServoPosition(servoName, position):
+def markServoPositionAsChanged(servoName, position, verbose=False):
     '''
     save current servo position to json file if last safe time differs
     more than maxDelay seconds
@@ -50,7 +50,7 @@ def saveServoPosition(servoName, position):
     if config.persistedServoPositionsLocal[servoName] != position:
         config.persistedServoPositionsLocal[servoName] = position
         config.servoPositionsChanged = True
-        config.log(f"update changed servoPosition, {servoName=}, {position=}")
+        if verbose: config.log(f"mark servo position as changed, {servoName=}, {position=}")
 
 
 def persistServoPositions():
@@ -446,5 +446,6 @@ if __name__ == "__main__":
 
         except Exception as e:
             config.log(f"unknown command or failure in function, request [{request}], {e}")
+            os._exit(1)
 
 

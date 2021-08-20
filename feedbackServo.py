@@ -68,6 +68,13 @@ def updatePIDValues(servoName, newKp, newKi, newKd):
     arduinoSend.servoFeedbackDefinitions(servoStatic.arduinoIndex, servoStatic.pin, servoFeedback)
     saveServoFeedbackDefinitions()
 
+def updateFeedbackMagnetOffset(servoName, newFeedbackMagnetOffset):
+    servoStatic = config.servoStaticDictLocal[servoName]
+    servoFeedback = config.servoFeedbackDictLocal[servoName]
+    servoFeedback.feedbackMagnetOffset = newFeedbackMagnetOffset
+    arduinoSend.servoFeedbackDefinitions(servoStatic.arduinoIndex, servoStatic.pin, servoFeedback)
+    saveServoFeedbackDefinitions()
+
 def setupFeedbackServos(arduinoIndex):
     """
     feedback servo definitions are stored in a json file
@@ -88,26 +95,26 @@ def setupFeedbackServos(arduinoIndex):
             time.sleep(0.2)     # add delay as arduino gets overwhelmed otherwise
 
 
-def clearPositionList(servoName, fromPos, toPos, speed):
-    config.feedbackPositions.update({servoName: {'fromPos': fromPos, 'toPos': toPos, 'speed': speed, 'values': []}})
+def clearPositionList(servoName, fromPos, toPos, speedRate):
+    config.feedbackPositions.update({servoName: {'fromPos': fromPos, 'toPos': toPos, 'speedRate': speedRate, 'values': []}})
 
-def addPosition(servoName, ms, currentPosition, servoWritePosition, wantedPosition):
-    config.feedbackPositions[servoName]['values'].append([ms, currentPosition, servoWritePosition, wantedPosition])
+def addPosition(servoName, ms, currentPosition, servoWritePosition, plannedPosition):
+    config.feedbackPositions[servoName]['values'].append([ms, currentPosition, servoWritePosition, plannedPosition])
 
 def dumpPositionList(servoName):
     fromPos = config.feedbackPositions[servoName]['fromPos']
     toPos = config.feedbackPositions[servoName]['toPos']
-    speed = config.feedbackPositions[servoName]['speed']
+    speedRate = config.feedbackPositions[servoName]['speedRate']
     basename = f"feedbackData/{servoName}/{str(datetime.datetime.now())[:10]}"
     os.makedirs(basename, exist_ok=True)
-    filename = f"{basename}/{str(datetime.datetime.now())[11:19]}_{fromPos}_{toPos}_{speed:.2f}"
+    filename = f"{basename}/{str(datetime.datetime.now())[11:19]}_{fromPos}_{toPos}_{speedRate:.2f}"
     with open(filename + ".json", 'w') as outFile:
         json.dump(config.feedbackPositions[servoName], outFile, indent=0)
 
     if createCsv:
         with open(filename + '.csv', 'w') as outFile:
             writer = csv.writer(outFile)
-            header = ["ms","current","servoWrite","wanted"]
+            header = ["ms","current","servoWrite","planned"]
             writer.writerow(header)
             for row in config.feedbackPositions[servoName]['values']:
                 writer.writerow(row)

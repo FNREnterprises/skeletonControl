@@ -64,7 +64,7 @@ def allServoRest(request):
 #    def setAutoDetach(self, requestQueue, servoName, duration):
 #        requestQueue.put({'msgType': 'setAutoDetach', 'servoName': servoName, 'duration': duration})
 def setAutoDetach(request):
-    arduinoSend.setAutoDetach(request['servoName'], request['duration']/1000)
+    arduinoSend.setAutoDetach(request['servoName'], request['duration'])
 
 # random moves is a separate process
 #def startRandomMoves(request):
@@ -82,6 +82,7 @@ def stopGesture(request):
 def startSwipe(request):
     config.log(f"startSwipe requested")
     servoName = request['servoName']
+    duration = request['duration']
     servoStatic:skeletonClasses.ServoStatic = config.servoStaticDictLocal.get(servoName)
     servoDerived:skeletonClasses.ServoDerived = config.servoDerivedDictLocal.get(servoName)
     servoCurrentLocal:skeletonClasses.ServoCurrent = config.servoCurrentDictLocal.get(servoName)
@@ -89,7 +90,7 @@ def startSwipe(request):
     config.updateSharedServoCurrent(servoName, servoCurrentLocal)
 
     minPos = servoStatic.minPos
-    swipeMoveDuration = servoDerived.msPerPos * servoDerived.posRange * 2
+    swipeMoveDuration = duration   #servoDerived.msPerPos * servoDerived.posRange * 2
 
     arduinoSend.requestServoPosition(servoName, minPos, swipeMoveDuration)
     # continuation of swipe is handled with the end move message in arduinoReceive

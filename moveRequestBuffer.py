@@ -12,14 +12,14 @@ class MoveRequestBuffer:
         self.servoActiveList = []
         self.verbose = verbose
         self.superVerbose = False
-        self.excludedServos = ['head.jaw']
+        self.unbufferedServos = ['head.jaw']
 
     def clearServoActiveList(self):
         if self.verbose: config.log(f"cleared servoActiveList {self.servoActiveList=}")
         self.servoActiveList.clear()
 
     def setServoActive(self, servoName):
-        if servoName in self.excludedServos:
+        if servoName in self.unbufferedServos:
             if self.verbose: config.log(f"set request for servo that is in the exclude list")
             return
 
@@ -32,7 +32,7 @@ class MoveRequestBuffer:
         return servoName in self.servoActiveList
 
     def setServoInactive(self, servoName):
-        if servoName in self.excludedServos:
+        if servoName in self.unbufferedServos:
             if self.superVerbose: config.log(f"set inactive request for servo that is in the exclude list")
             return
 
@@ -67,7 +67,7 @@ class MoveRequestBuffer:
     def addMoveRequest(self, request):
 
         servoName = request['servoName']
-        if servoName in self.excludedServos:
+        if servoName in self.unbufferedServos:
             if self.verbose: config.log(f"add request for servo that is in the moveRequestBuffer exclude list")
 
             config.log(f"send request directly to arduino {request=}")
@@ -88,7 +88,7 @@ class MoveRequestBuffer:
         :param servoName:
         :return:
         """
-        if servoName in self.excludedServos:
+        if servoName in self.unbufferedServos:
             if self.verbose: config.log(f"remove request for servo that is in the moveRequestBuffer exclude list")
             return
 
@@ -117,14 +117,21 @@ class MoveRequestBuffer:
 
                 # if more than 1 request for servo in list use only the first one
                 if not self.isServoActive(item['servoName']):
-                    self.setServoActive(item['servoName'])
+                    servoName = item['servoName']
+
+                    # for move requests update servoCurrentLocal
+                    servoCurrent = config.servoCurrentDictLocal[servoName]
+                    servoCurrent.timeOfLastMoveRequest = time.time()
+                    servoCurrent.targetPosition = item['toPos']
+
+                    self.setServoActive(servoName)
                     config.log(f"send request to arduino {item=}")
                     arduinoSend.sendArduinoCommand(item['arduino'], item['msg'])
                     config.log(f"{len(self.servoRequestList)=}, {index=}")
 
                     # check for feedback servo
-                    if item['servoName'] in config.servoFeedbackDictLocal:
-                        feedbackServo.clearPositionList(item['servoName'], item['fromPos'], item['toPos'], item['speed'])
+                    if servoName in config.servoFeedbackDictLocal:
+                        feedbackServo.clearPositionList(item['servoName'], item['fromPos'], item['toPos'], item['speedRate'])
 
                     try:
                         self.servoRequestList.pop(index)
